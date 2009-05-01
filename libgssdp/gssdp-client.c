@@ -820,6 +820,14 @@ socket_source_cb (GSSDPSocketSource *socket, GSSDPClient *client)
 #endif
                           (struct sockaddr *) &addr,
                           &addr_size);
+#ifdef G_OS_WIN32
+        if (bytes == SOCKET_ERROR) {
+                g_debug("Error in recvfrom: %d (%s)",
+                                get_last_error(),
+                                get_error_message(get_last_error()));
+                return TRUE;
+        }
+#endif
 
         /* We need the following lines to make sure the right client received
          * the packet. We won't need to do this if there was any way to tell
