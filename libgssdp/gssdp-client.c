@@ -154,7 +154,7 @@ get_error_message(int error) {
                 return g_strdup(message);
         }
         else {
-                g_message("Failed to format message: %d", GetLastError());
+                g_message("Failed to format message: %lu", GetLastError());
                 return g_strdup("Failed");
         }
 #else
