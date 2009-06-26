@@ -10,6 +10,10 @@
 
 LTVERSION = 2:0:0
 
+if OS_WIN32
+WIN32_LIBS = -lws2_32
+endif
+
 AM_CFLAGS = $(LIBGSSDP_CFLAGS) -I$(top_srcdir)
 
 libgssdpincdir = $(includedir)/gssdp-1.0/libgssdp
@@ -30,7 +34,7 @@ gssdp-marshal.h: gssdp-marshal.list
 
 BUILT_SOURCES = gssdp-marshal.c gssdp-marshal.h
 
-libgssdp_1_0_la_LDFLAGS = -version-info $(LTVERSION)
+libgssdp_1_0_la_LDFLAGS = -version-info $(LTVERSION) -no-undefined
 
 libgssdp_1_0_la_SOURCES = gssdp-client.c		\
 			  gssdp-client-private.h	\
@@ -42,7 +46,7 @@ libgssdp_1_0_la_SOURCES = gssdp-client.c		\
 			  gssdp-socket-source.h		\
 			  $(BUILT_SOURCES)
 
-libgssdp_1_0_la_LIBADD = $(LIBGSSDP_LIBS)
+libgssdp_1_0_la_LIBADD = $(LIBGSSDP_LIBS) $(WIN32_LIBS)
 
 EXTRA_DIST = gssdp-marshal.list
 

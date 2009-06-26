@@ -24,10 +24,15 @@
 
 #include <config.h>
 #include <glib.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    typedef int socklen_t;
+#else
+    #include <sys/socket.h>
+    #include <sys/types.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+#endif
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -60,6 +65,22 @@ static const GSourceFuncs gssdp_socket_source_funcs = {
         gssdp_socket_source_dispatch,
         gssdp_socket_source_finalize
 };
+#ifdef _WIN32
+static int
+inet_aton (const gchar *src, struct in_addr *addr)
+
+{
+        int ret = inet_addr (src);
+        if (ret == INADDR_NONE) {
+                if(strcmp( "255.255.255.255", src))
+                        return 0;
+                addr->s_addr = ret;
+                return 1;
+        }
+        addr->s_addr = ret;
+        return 1;
+}
+#endif
 
 /**
  * gssdp_socket_source_new

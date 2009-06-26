@@ -31,18 +31,28 @@
  */
 
 #include <config.h>
-#include <sys/socket.h>
 #include <sys/types.h>
+#ifndef _WIN32
+#include <sys/socket.h>
 #include <sys/utsname.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+typedef int socklen_t;
+/* from the return value of inet_addr */
+typedef unsigned long in_addr_t;
+#endif
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#ifndef _WIN32
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <ifaddrs.h>
+#endif
 #include <libsoup/soup-headers.h>
 
 #include "gssdp-client.h"
@@ -621,6 +631,19 @@ _gssdp_client_send_message (GSSDPClient *client,
 static char *
 make_server_id (void)
 {
+        #ifdef _WIN32
+        OSVERSIONINFO versioninfo;
+        versioninfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+        if (GetVersionEx (&versioninfo)) {
+                return g_strdup_printf ("Microsoft Windows/%ld.%ld GSSDP/%s",
+                                        versioninfo.dwMajorVersion,
+                                        versioninfo.dwMinorVersion,
+                                        VERSION);
+        } else {
+                return g_strdup_printf ("Microsoft Windows GSSDP/%s",
+                                        VERSION);
+        }
+        #else
         struct utsname sysinfo;
 
         uname (&sysinfo);
@@ -629,6 +652,7 @@ make_server_id (void)
                                 sysinfo.sysname,
                                 sysinfo.version,
                                 VERSION);
+        #endif
 }
 
 static gboolean
@@ -698,6 +722,20 @@ parse_http_response (char                *buf,
                 return FALSE;
         }
 }
+
+#ifdef G_OS_WIN32
+static in_addr_t
+inet_netof (struct in_addr in) {
+        in_addr_t i = ntohl(in.s_addr);
+
+	if (IN_CLASSA (i))
+		return (((i) & IN_CLASSA_NET) >> IN_CLASSA_NSHIFT);
+	else if (IN_CLASSB (i))
+		return (((i) & IN_CLASSB_NET) >> IN_CLASSB_NSHIFT);
+	else
+		return (((i) & IN_CLASSC_NET) >> IN_CLASSC_NSHIFT);
+}
+#endif
 
 /**
  * Called when data can be read from the socket

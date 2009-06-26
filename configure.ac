@@ -8,6 +8,8 @@ AM_MAINTAINER_MODE
 AC_ISC_POSIX
 AC_PROG_CC
 AC_STDC_HEADERS
+AC_LIBTOOL_WIN32_DLL
+AC_LIBTOOL_RC
 AC_PROG_LIBTOOL
 
 PKG_CHECK_MODULES(LIBGSSDP, glib-2.0 >= 2.18 \
@@ -58,6 +60,20 @@ AC_ARG_ENABLE(debug,
 if test "x$enable_debug" = "xyes"; then
         CFLAGS="$CFLAGS -g -Wall -Werror"
 fi
+
+
+dnl Check for Win32
+AC_MSG_CHECKING([for Win32])
+case "$host" in
+    *-*-mingw*)
+        os_win32=yes
+        ;;
+    *)
+        os_win32=no
+        ;;
+esac
+AC_MSG_RESULT([$os_win32])
+AM_CONDITIONAL(OS_WIN32, [test $os_win32 = yes])
 
 GTK_DOC_CHECK([1.0])
 
