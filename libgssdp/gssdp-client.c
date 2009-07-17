@@ -174,6 +174,21 @@ static void
 gssdp_client_constructed (GObject *object)
 {
         GSSDPClient *client = GSSDP_CLIENT (object);
+#ifdef G_OS_WIN32
+        WSADATA wsaData = {0};
+        if (WSAStartup (MAKEWORD (2,2), &wsaData) != 0) {
+                if (client->priv->error) {
+                        gchar *message;
+
+                        message = get_error_message(get_last_error());
+                        g_set_error_literal (client->priv->error,
+                                        GSSDP_ERROR,
+                                        GSSDP_ERROR_FAILED,
+                                        message);
+                        g_free(message);
+                }
+        }
+#endif
 
         /* Make sure all network info is available to us */
         if (!init_network_info (client))
@@ -329,6 +344,9 @@ gssdp_client_finalize (GObject *object)
         GSSDPClient *client;
 
         client = GSSDP_CLIENT (object);
+#ifdef G_OS_WIN32
+        WSACleanup ();
+#endif
 
         g_free (client->priv->server_id);
         g_free (client->priv->iface);

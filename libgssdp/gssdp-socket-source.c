@@ -79,7 +79,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
         /* Create source */
         socket_source = g_slice_new0(GSSDPSocketSource);
 
-        /* Create socket */
+       /* Create socket */
         socket_source->poll_fd.fd = socket (AF_INET,
                                             SOCK_DGRAM,
                                             IPPROTO_UDP);
