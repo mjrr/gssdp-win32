@@ -11,7 +11,7 @@
 LTVERSION = 2:0:0
 
 if OS_WIN32
-WIN32_LIBS = -lws2_32
+WIN32_LIBS = -lws2_32 -liphlpapi
 endif
 
 AM_CFLAGS = $(LIBGSSDP_CFLAGS) -I$(top_srcdir)

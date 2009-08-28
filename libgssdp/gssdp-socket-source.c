@@ -26,6 +26,7 @@
 #include <glib.h>
 #ifdef _WIN32
     #include <winsock2.h>
+    #include <ws2tcpip.h>
     typedef int socklen_t;
 #else
     #include <sys/socket.h>
@@ -121,7 +122,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
         res = setsockopt (socket_source->poll_fd.fd, 
                           SOL_SOCKET,
                           SO_BROADCAST,
-                          &boolean,
+                          (char *)&boolean,
                           sizeof (boolean));
         if (res == -1)
                 goto error;
@@ -148,7 +149,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                 res = setsockopt (socket_source->poll_fd.fd,
                                   SOL_SOCKET,
                                   SO_REUSEADDR,
-                                  &boolean,
+                                  (char *)&boolean,
                                   sizeof (boolean));
                 if (res == -1)
                         goto error;
@@ -157,7 +158,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                 res = setsockopt (socket_source->poll_fd.fd,
                                   IPPROTO_IP,
                                   IP_MULTICAST_LOOP,
-                                  &boolean,
+                                  (char *)&boolean,
                                   sizeof (boolean));
                 if (res == -1)
                        goto error;
@@ -166,7 +167,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                 res = setsockopt (socket_source->poll_fd.fd,
                                   IPPROTO_IP,
                                   IP_MULTICAST_IF,
-                                  &iface_addr,
+                                  (char *)&iface_addr,
                                   sizeof (struct in_addr));
                 if (res == -1)
                         goto error;
@@ -183,7 +184,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                 res = setsockopt (socket_source->poll_fd.fd,
                                   IPPROTO_IP,
                                   IP_ADD_MEMBERSHIP,
-                                  &mreq,
+                                  (char *)&mreq,
                                   sizeof (mreq));
                 if (res == -1)
                         goto error;
@@ -251,12 +252,12 @@ gssdp_socket_source_dispatch (GSource    *source,
 
                 value = EINVAL;
                 size_int = sizeof (int);
-                
+
                 /* Get errno from socket */
                 getsockopt (socket_source->poll_fd.fd,
                             SOL_SOCKET,
                             SO_ERROR,
-                            &value,
+                            (char *)&value,
                             &size_int);
 
                 g_warning ("Socket error %d received: %s",

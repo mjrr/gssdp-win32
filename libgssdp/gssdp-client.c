@@ -31,15 +31,18 @@
  */
 
 #include <config.h>
+#include <glib.h>
 #include <sys/types.h>
-#ifndef _WIN32
+#ifndef G_OS_WIN32
 #include <sys/socket.h>
 #include <sys/utsname.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #else
+#define _WIN32_WINNT 0x0502
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
 typedef int socklen_t;
 /* from the return value of inet_addr */
 typedef unsigned long in_addr_t;
@@ -48,7 +51,7 @@ typedef unsigned long in_addr_t;
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
-#ifndef _WIN32
+#ifndef G_OS_WIN32
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <ifaddrs.h>
@@ -62,6 +65,10 @@ typedef unsigned long in_addr_t;
 #include "gssdp-marshal.h"
 #include "gssdp-protocol.h"
 
+#ifndef INET6_ADDRSTRLEN
+#define INET6_ADDRSTRLEN 46
+#endif
+
 /* Size of the buffer used for reading from the socket */
 #define BUF_SIZE 1024
 
@@ -73,7 +80,7 @@ struct _GSSDPClientPrivate {
         GMainContext      *main_context;
 
         char              *server_id;
-        char              *interface;
+        char              *iface;
         char              *host_ip;
 
         GError            **error;
@@ -241,7 +248,7 @@ gssdp_client_set_property (GObject      *object,
                 client->priv->error = g_value_get_pointer (value);
                 break;
         case PROP_IFACE:
-                client->priv->interface = g_value_dup_string (value);
+                client->priv->iface = g_value_dup_string (value);
                 break;
         case PROP_ACTIVE:
                 client->priv->active = g_value_get_boolean (value);
@@ -285,7 +292,7 @@ gssdp_client_finalize (GObject *object)
         client = GSSDP_CLIENT (object);
 
         g_free (client->priv->server_id);
-        g_free (client->priv->interface);
+        g_free (client->priv->iface);
         g_free (client->priv->host_ip);
 }
 
@@ -447,12 +454,12 @@ gssdp_client_class_init (GSSDPClientClass *klass)
  **/
 GSSDPClient *
 gssdp_client_new (GMainContext *main_context,
-                  const char   *interface,
+                  const char   *iface,
                   GError      **error)
 {
         return g_object_new (GSSDP_TYPE_CLIENT,
                              "main-context", main_context,
-                             "interface", interface,
+                             "interface", iface,
                              "error", error,
                              NULL);
 }
@@ -538,7 +545,7 @@ gssdp_client_get_interface (GSSDPClient *client)
 {
         g_return_val_if_fail (GSSDP_IS_CLIENT (client), NULL);
 
-        return client->priv->interface;
+        return client->priv->iface;
 }
 
 /**
@@ -631,7 +638,7 @@ _gssdp_client_send_message (GSSDPClient *client,
 static char *
 make_server_id (void)
 {
-        #ifdef _WIN32
+        #ifdef G_OS_WIN32
         OSVERSIONINFO versioninfo;
         versioninfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
         if (GetVersionEx (&versioninfo)) {
@@ -762,7 +769,11 @@ socket_source_cb (GSSDPSocketSource *socket, GSSDPClient *client)
         bytes = recvfrom (fd,
                           buf,
                           BUF_SIZE - 1, /* Leave space for trailing \0 */
+#ifdef G_OS_WIN32
+                          0,
+#else
                           MSG_TRUNC,
+#endif
                           (struct sockaddr *) &addr,
                           &addr_size);
 
@@ -859,11 +870,95 @@ multicast_socket_source_cb (gpointer user_data)
  * appropriately.
  */
 static char *
-get_host_ip (char **interface)
+get_host_ip (char **iface)
 {
+#ifdef G_OS_WIN32
+        char *addr = NULL;
+        GList *up_ifaces = NULL, *ifaceptr = NULL;
+        ULONG flags = GAA_FLAG_INCLUDE_PREFIX |
+                      GAA_FLAG_SKIP_DNS_SERVER |
+                      GAA_FLAG_SKIP_MULTICAST;
+        /* use 15k buffer initially as documented in MSDN */
+        DWORD size = 0x3C00;
+        DWORD ret;
+        PIP_ADAPTER_ADDRESSES adapters_addresses;
+        PIP_ADAPTER_ADDRESSES adapter;
+
+        do {
+                adapters_addresses = (PIP_ADAPTER_ADDRESSES) g_malloc0(size);
+                ret = GetAdaptersAddresses (AF_UNSPEC,
+                                flags,
+                                NULL,
+                                adapters_addresses,
+                                &size);
+                if (ret == ERROR_BUFFER_OVERFLOW) {
+                        g_free (adapters_addresses);
+                }
+        } while (ret == ERROR_BUFFER_OVERFLOW);
+
+        if (ret == ERROR_SUCCESS) {
+                for (adapter = adapters_addresses; adapter != NULL; adapter = adapter->Next) {
+                        if (adapter->FirstUnicastAddress == NULL)
+                                continue;
+                        if (adapter->OperStatus != IfOperStatusUp)
+                                continue;
+                        /* Skip tunneling devices */
+                        if (*iface != NULL &&
+                            strcmp (*iface, adapter->AdapterName) != 0)
+                                continue;
+
+                /* I think that IPv6 is done via pseudo-adapters, so that there are eihter
+                 * IPv4 or IPv6 addresses defined on the adapter
+                 * 
+                 * Loopback-Devices and IPv6 go to the end of the list, IPv4 to the front
+                 */
+                if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ||
+                    adapter->FirstUnicastAddress->Address.lpSockaddr->sa_family == AF_INET6)
+                        up_ifaces = g_list_append (up_ifaces, adapter);
+                else
+                        up_ifaces = g_list_prepend (up_ifaces, adapter);
+                }
+        }
+
+        for (ifaceptr = up_ifaces; ifaceptr != NULL; ifaceptr = ifaceptr->next) {
+                char ip[INET6_ADDRSTRLEN];
+                DWORD len = INET6_ADDRSTRLEN;
+                const char *p = NULL;
+                PIP_ADAPTER_ADDRESSES ifa;
+                ifa = (PIP_ADAPTER_ADDRESSES)ifaceptr->data;
+                switch (ifa->FirstUnicastAddress->Address.lpSockaddr->sa_family) {
+                        case AF_INET:
+                        case AF_INET6:
+                                ret = WSAAddressToStringA(
+                                      ifa->FirstUnicastAddress->Address.lpSockaddr,
+                                      ifa->FirstUnicastAddress->Address.iSockaddrLength,
+                                      NULL,
+                                      ip,
+                                      &len);
+                                if (ret == 0) {
+                                        p = ip;
+                                }
+                                break;
+                        default:
+                                continue;
+                }
+
+                if (p != NULL) {
+                        addr = g_strdup (p);
+                        if (*iface == NULL) {
+                                *iface = g_strdup (ifa->AdapterName);
+                        }
+                        break;
+                }
+
+        }
+        g_list_free (up_ifaces);
+        g_free (adapters_addresses);
+        return addr;
+#else
         struct ifaddrs *ifa_list, *ifa;
         char *ret;
-        GList *up_ifaces, *iface;
+        GList *up_ifaces, *ifaceptr;
 
         ret = NULL;
         up_ifaces = NULL;
@@ -879,7 +974,7 @@ get_host_ip (char **interface)
                 if (ifa->ifa_addr == NULL)
                         continue;
 
-                if (*interface && strcmp (*interface, ifa->ifa_name) != 0)
+                if (*iface && strcmp (*iface, ifa->ifa_name) != 0)
                         continue;
                 else if (!(ifa->ifa_flags & IFF_UP))
                         continue;
@@ -892,7 +987,7 @@ get_host_ip (char **interface)
                         up_ifaces = g_list_prepend (up_ifaces, ifa);
         }
 
-        for (iface = up_ifaces; iface != NULL; iface = iface->next) {
+        for (ifaceptr = up_ifaces; ifaceptr != NULL; ifaceptr = ifaceptr->next) {
                 char ip[INET6_ADDRSTRLEN];
                 const char *p;
                 struct sockaddr_in *s4;
@@ -900,7 +995,7 @@ get_host_ip (char **interface)
 
                 p = NULL;
 
-                ifa = iface->data;
+                ifa = ifaceptr->data;
 
                 switch (ifa->ifa_addr->sa_family) {
                 case AF_INET:
@@ -920,8 +1015,8 @@ get_host_ip (char **interface)
                 if (p != NULL) {
                         ret = g_strdup (p);
 
-                        if (*interface == NULL)
-                                *interface = g_strdup (ifa->ifa_name);
+                        if (*iface == NULL)
+                                *iface = g_strdup (ifa->ifa_name);
                         break;
                 }
         }
@@ -930,6 +1025,7 @@ get_host_ip (char **interface)
         freeifaddrs (ifa_list);
 
         return ret;
+#endif
 }
 
 static gboolean
@@ -937,11 +1033,11 @@ init_network_info (GSSDPClient *client)
 {
         gboolean ret = TRUE;
 
-        if (client->priv->interface == NULL || client->priv->host_ip == NULL)
+        if (client->priv->iface == NULL || client->priv->host_ip == NULL)
                 client->priv->host_ip =
-                        get_host_ip (&client->priv->interface);
+                        get_host_ip (&client->priv->iface);
 
-        if (client->priv->interface == NULL) {
+        if (client->priv->iface == NULL) {
                 if (client->priv->error)
                         g_set_error (client->priv->error,
                                      GSSDP_ERROR,
@@ -955,7 +1051,7 @@ init_network_info (GSSDPClient *client)
                                      GSSDP_ERROR,
                                      GSSDP_ERROR_FAILED,
                                      "Failed to find IP of interface %s",
-                                     client->priv->interface);
+                                     client->priv->iface);
 
                 ret = FALSE;
         }
