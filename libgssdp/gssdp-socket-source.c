@@ -24,7 +24,7 @@
 
 #include <config.h>
 #include <glib.h>
-#ifdef _WIN32
+#ifdef G_OS_WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
     typedef int socklen_t;
@@ -42,7 +42,7 @@
 #include "gssdp-socket-source.h"
 #include "gssdp-protocol.h"
 
-#ifdef _WIN32
+#ifdef G_OS_WIN32
 static int
 inet_aton (const gchar *src, struct in_addr *addr)
 
@@ -92,7 +92,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
         res = setsockopt (socket_source->poll_fd.fd, 
                           SOL_SOCKET,
                           SO_BROADCAST,
-                          (char *)&boolean,
+                          (char *) &boolean,
                           sizeof (boolean));
         if (res == -1)
                 goto error;
@@ -119,7 +119,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                 res = setsockopt (socket_source->poll_fd.fd,
                                   SOL_SOCKET,
                                   SO_REUSEADDR,
-                                  (char *)&boolean,
+                                  (char *) &boolean,
                                   sizeof (boolean));
                 if (res == -1)
                         goto error;
@@ -128,16 +128,46 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                 res = setsockopt (socket_source->poll_fd.fd,
                                   IPPROTO_IP,
                                   IP_MULTICAST_LOOP,
-                                  (char *)&boolean,
+                                  (char *) &boolean,
                                   sizeof (boolean));
                 if (res == -1)
                        goto error;
 
+                bind_addr.sin_port = htons (SSDP_PORT);
+#ifdef G_OS_WIN32
+                /* On windows we apparently cannot bind to multicast adresses */
+                memcpy (&(bind_addr.sin_addr),
+                        &iface_addr,
+                        sizeof (struct in_addr));
+#else
+                res = inet_aton (SSDP_ADDR, &(bind_addr.sin_addr));
+                if (res == 0)
+                        goto error;
+#endif
+        } else {
+                bind_addr.sin_port = 0;
+                memcpy (&(bind_addr.sin_addr),
+                        &iface_addr,
+                        sizeof (struct in_addr));
+        }
+
+        /* Bind to requested port and address */
+        res = bind (socket_source->poll_fd.fd,
+                    (struct sockaddr *) &bind_addr,
+                    sizeof (bind_addr));
+        if (res == -1)
+                goto error;
+        /* on windows, joining multicast groups has to happen after
+         * the call to bind */
+
+        if (type == GSSDP_SOCKET_SOURCE_TYPE_MULTICAST) {
                 /* Set the interface */
+                /* on windows needs to be done after bind to get an IGMP
+                 * message */
                 res = setsockopt (socket_source->poll_fd.fd,
                                   IPPROTO_IP,
                                   IP_MULTICAST_IF,
-                                  (char *)&iface_addr,
+                                  (char *) &iface_addr,
                                   sizeof (struct in_addr));
                 if (res == -1)
                         goto error;
@@ -154,30 +184,13 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                 res = setsockopt (socket_source->poll_fd.fd,
                                   IPPROTO_IP,
                                   IP_ADD_MEMBERSHIP,
-                                  (char *)&mreq,
+                                  (char *) &mreq,
                                   sizeof (mreq));
                 if (res == -1)
                         goto error;
-
-                bind_addr.sin_port = htons (SSDP_PORT);
-                res = inet_aton (SSDP_ADDR, &(bind_addr.sin_addr));
-                if (res == 0)
-                        goto error;
-        } else {
-                bind_addr.sin_port = 0;
-                memcpy (&(bind_addr.sin_addr),
-                        &iface_addr,
-                        sizeof (struct in_addr));
         }
 
-        /* Bind to requested port and address */
-        res = bind (socket_source->poll_fd.fd,
-                    (struct sockaddr *) &bind_addr,
-                    sizeof (bind_addr));
-        if (res == -1)
-                goto error;
-
-#ifdef _WIN32
+#ifdef G_OS_WIN32
         socket_source->channel = g_io_channel_win32_new_socket(socket_source->poll_fd.fd);
 #else
         socket_source->channel = g_io_channel_unix_new(socket_source->poll_fd.fd);
