@@ -135,6 +135,41 @@ gssdp_client_init (GSSDPClient *client)
         client->priv->server_id = make_server_id ();
 }
 
+static gchar*
+get_error_message(int error) {
+#ifdef G_OS_WIN32
+        gchar message[2048];
+        DWORD ret;
+
+        ret = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM |
+                            FORMAT_MESSAGE_IGNORE_INSERTS |
+                            FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                            NULL,
+                            error,
+                            MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                            (LPSTR)message,
+                            2048,
+                            NULL);
+        if (ret != 0) {
+                return g_strdup(message);
+        }
+        else {
+                g_message("Failed to format message: %d", GetLastError());
+                return g_strdup("Failed");
+        }
+#else
+        return g_strdup(strerror(error));
+#endif
+}
+
+static int get_last_error() {
+#ifdef G_OS_WIN32
+        return WSAGetLastError();
+#else
+        return errno;
+#endif
+}
+
 static void
 gssdp_client_constructed (GObject *object)
 {
@@ -168,12 +203,16 @@ gssdp_client_constructed (GObject *object)
         }
 
         if (!client->priv->request_socket || !client->priv->multicast_socket) {
-                if (client->priv->error)
-                        g_set_error_literal (client->priv->error,
-                                             GSSDP_ERROR,
-                                             GSSDP_ERROR_FAILED,
-                                             strerror (errno));
+                if (client->priv->error) {
+                        gchar *message;
 
+                        message = get_error_message(get_last_error());
+                        g_set_error_literal (client->priv->error,
+                                        GSSDP_ERROR,
+                                        GSSDP_ERROR_FAILED,
+                                        message);
+                        g_free(message);
+                }
                 return;
         }
 
@@ -627,8 +666,13 @@ _gssdp_client_send_message (GSSDPClient *client,
                       sizeof (addr));
 
         if (res == -1) {
+				gchar *message;
+
+				message = get_error_message(get_last_error());
                 g_warning ("sendto: Error %d sending message: %s",
-                           errno, strerror (errno));
+                           get_last_error(), message);
+
+				g_free (message);
         }
 }
 
@@ -1026,6 +1070,8 @@ get_host_ip (char **iface)
 
         return ret;
 #endif
+
+		/* find interface and ip address of first default gateway */
 }
 
 static gboolean
