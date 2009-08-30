@@ -42,30 +42,6 @@
 #include "gssdp-socket-source.h"
 #include "gssdp-protocol.h"
 
-struct _GSSDPSocketSource {
-        GSource source;
-
-        GPollFD poll_fd;
-};
-
-static gboolean
-gssdp_socket_source_prepare  (GSource    *source,
-                              int        *timeout);
-static gboolean
-gssdp_socket_source_check    (GSource    *source);
-static gboolean
-gssdp_socket_source_dispatch (GSource    *source,
-                              GSourceFunc callback,
-                              gpointer    user_data);
-static void
-gssdp_socket_source_finalize (GSource    *source);
-
-static const GSourceFuncs gssdp_socket_source_funcs = {
-        gssdp_socket_source_prepare,
-        gssdp_socket_source_check,
-        gssdp_socket_source_dispatch,
-        gssdp_socket_source_finalize
-};
 #ifdef _WIN32
 static int
 inet_aton (const gchar *src, struct in_addr *addr)
@@ -92,7 +68,6 @@ GSSDPSocketSource *
 gssdp_socket_source_new (GSSDPSocketSourceType type,
                          const char           *host_ip)
 {
-        GSource *source;
         GSSDPSocketSource *socket_source;
         struct sockaddr_in bind_addr;
         struct in_addr iface_addr;
@@ -102,10 +77,7 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
         int res;
 
         /* Create source */
-        source = g_source_new ((GSourceFuncs*)&gssdp_socket_source_funcs,
-                               sizeof (GSSDPSocketSource));
-
-        socket_source = (GSSDPSocketSource *) source;
+        socket_source = g_slice_new0(GSSDPSocketSource);
 
         /* Create socket */
         socket_source->poll_fd.fd = socket (AF_INET,
@@ -113,10 +85,8 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
                                             IPPROTO_UDP);
         if (socket_source->poll_fd.fd == -1)
                 goto error;
-        
-        socket_source->poll_fd.events = G_IO_IN | G_IO_ERR;
 
-        g_source_add_poll (source, &socket_source->poll_fd);
+        socket_source->poll_fd.events = G_IO_IN | G_IO_ERR;
 
         /* Enable broadcasting */
         res = setsockopt (socket_source->poll_fd.fd, 
@@ -207,76 +177,17 @@ gssdp_socket_source_new (GSSDPSocketSourceType type,
         if (res == -1)
                 goto error;
 
+#ifdef _WIN32
+        socket_source->channel = g_io_channel_win32_new_socket(socket_source->poll_fd.fd);
+#else
+        socket_source->channel = g_io_channel_unix_new(socket_source->poll_fd.fd);
+#endif
+        socket_source->source = g_io_create_watch(socket_source->channel, socket_source->poll_fd.events);
+
         return socket_source;
 
 error:
-        g_source_destroy (source);
-        
         return NULL;
-}
-
-static gboolean
-gssdp_socket_source_prepare (GSource *source,
-                             int     *timeout)
-{
-        return FALSE;
-}
-
-static gboolean
-gssdp_socket_source_check (GSource *source)
-{
-        GSSDPSocketSource *socket_source;
-
-        socket_source = (GSSDPSocketSource *) source;
-
-        return socket_source->poll_fd.revents & (G_IO_IN | G_IO_ERR);
-}
-
-static gboolean
-gssdp_socket_source_dispatch (GSource    *source,
-                              GSourceFunc callback,
-                              gpointer    user_data)
-{
-        GSSDPSocketSource *socket_source;
-
-        socket_source = (GSSDPSocketSource *) source;
-
-        if (socket_source->poll_fd.revents & G_IO_IN) {
-                /* Ready to read */
-                if (callback)
-                        callback (user_data);
-        } else if (socket_source->poll_fd.revents & G_IO_ERR) {
-                /* Error */
-                int value;
-                socklen_t size_int;
-
-                value = EINVAL;
-                size_int = sizeof (int);
-
-                /* Get errno from socket */
-                getsockopt (socket_source->poll_fd.fd,
-                            SOL_SOCKET,
-                            SO_ERROR,
-                            (char *)&value,
-                            &size_int);
-
-                g_warning ("Socket error %d received: %s",
-                           value,
-                           strerror (value));
-        }
-
-        return TRUE;
-}
-
-static void
-gssdp_socket_source_finalize (GSource *source)
-{
-        GSSDPSocketSource *socket_source;
-
-        socket_source = (GSSDPSocketSource *) source;
-        
-        /* Close the socket */
-        close (socket_source->poll_fd.fd);
 }
 
 /**
@@ -290,4 +201,14 @@ gssdp_socket_source_get_fd (GSSDPSocketSource *socket_source)
         g_return_val_if_fail (socket_source != NULL, -1);
         
         return socket_source->poll_fd.fd;
+}
+
+void
+gssdp_socket_source_destroy(GSSDPSocketSource *socket_source)
+{
+        g_return_if_fail (socket_source != NULL);
+        g_source_destroy(socket_source->source);
+        g_io_channel_shutdown(socket_source->channel, TRUE, NULL);
+        g_io_channel_unref(socket_source->channel);
+        g_slice_free(GSSDPSocketSource, socket_source);
 }

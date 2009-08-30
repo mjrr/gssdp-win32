@@ -24,6 +24,13 @@
 
 G_BEGIN_DECLS
 
+struct _GSSDPSocketSource {
+        GIOChannel *channel;
+        GSource *source;
+
+        GPollFD poll_fd;
+};
+
 typedef struct _GSSDPSocketSource GSSDPSocketSource;
 
 typedef enum {
@@ -34,6 +41,8 @@ typedef enum {
 G_GNUC_INTERNAL GSSDPSocketSource *
 gssdp_socket_source_new    (GSSDPSocketSourceType type,
                             const char           *host_ip);
+G_GNUC_INTERNAL void
+gssdp_socket_source_destroy(GSSDPSocketSource *socket_source);
 
 G_GNUC_INTERNAL int
 gssdp_socket_source_get_fd (GSSDPSocketSource    *socket_source);

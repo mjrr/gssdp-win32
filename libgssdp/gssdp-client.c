@@ -115,9 +115,9 @@ gssdp_client_set_main_context (GSSDPClient  *client,
 static char *
 make_server_id                (void);
 static gboolean
-request_socket_source_cb      (gpointer      user_data);
+request_socket_source_cb      (GIOChannel *source, GIOCondition condition, gpointer      user_data);
 static gboolean
-multicast_socket_source_cb    (gpointer      user_data);
+multicast_socket_source_cb    (GIOChannel *source, GIOCondition condition, gpointer      user_data);
 static gboolean
 init_network_info             (GSSDPClient  *client);
 
@@ -150,8 +150,8 @@ gssdp_client_constructed (GObject *object)
                                          gssdp_client_get_host_ip (client));
         if (client->priv->request_socket != NULL) {
                 g_source_set_callback
-                        ((GSource *) client->priv->request_socket,
-                         request_socket_source_cb,
+                        (client->priv->request_socket->source,
+                         (GSourceFunc)request_socket_source_cb,
                          client,
                          NULL);
         }
@@ -161,8 +161,8 @@ gssdp_client_constructed (GObject *object)
                                          gssdp_client_get_host_ip (client));
         if (client->priv->multicast_socket != NULL) {
                 g_source_set_callback
-                        ((GSource *) client->priv->multicast_socket,
-                         multicast_socket_source_cb,
+                        (client->priv->multicast_socket->source,
+                         (GSourceFunc)multicast_socket_source_cb,
                          client,
                          NULL);
         }
@@ -177,13 +177,13 @@ gssdp_client_constructed (GObject *object)
                 return;
         }
 
-        g_source_attach ((GSource *) client->priv->request_socket,
+        g_source_attach (client->priv->request_socket->source,
                          client->priv->main_context);
-        g_source_unref ((GSource *) client->priv->request_socket);
+        g_source_unref (client->priv->request_socket->source);
 
-        g_source_attach ((GSource *) client->priv->multicast_socket,
+        g_source_attach (client->priv->multicast_socket->source,
                          client->priv->main_context);
-        g_source_unref ((GSource *) client->priv->multicast_socket);
+        g_source_unref (client->priv->multicast_socket->source);
 }
 
 static void
@@ -268,12 +268,12 @@ gssdp_client_dispose (GObject *object)
 
         /* Destroy the SocketSources */
         if (client->priv->request_socket) {
-                g_source_destroy ((GSource *) client->priv->request_socket);
+                gssdp_socket_source_destroy(client->priv->request_socket);
                 client->priv->request_socket = NULL;
         }
 
         if (client->priv->multicast_socket) {
-                g_source_destroy ((GSource *) client->priv->multicast_socket);
+                gssdp_socket_source_destroy(client->priv->multicast_socket);
                 client->priv->multicast_socket = NULL;
         }
 
@@ -845,7 +845,7 @@ socket_source_cb (GSSDPSocketSource *socket, GSSDPClient *client)
 }
 
 static gboolean
-request_socket_source_cb (gpointer user_data)
+request_socket_source_cb (GIOChannel *source, GIOCondition condition, gpointer      user_data)
 {
         GSSDPClient *client;
 
@@ -855,11 +855,11 @@ request_socket_source_cb (gpointer user_data)
 }
 
 static gboolean
-multicast_socket_source_cb (gpointer user_data)
+multicast_socket_source_cb (GIOChannel *source, GIOCondition condition, gpointer      user_data)
 {
         GSSDPClient *client;
 
-        client = GSSDP_CLIENT (user_data);
+        client = GSSDP_CLIENT(user_data);
 
         return socket_source_cb (client->priv->multicast_socket, client);
 }
